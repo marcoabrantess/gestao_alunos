@@ -1,11 +1,116 @@
-<?php 
+<?php
+
+/**
+ * Resolve one database setting.
+ * Process environment wins. A local, uncommitted .env file supplies only missing keys.
+ */
+function read_database_setting(string $name): string
+{
+    $value = database_setting_from_environment($name);
+    if ($value !== null) {
+        return $value;
+    }
+
+    $fromFile = database_settings_from_local_file();
+    if (isset($fromFile[$name]) && $fromFile[$name] !== '') {
+        return $fromFile[$name];
+    }
+
+    http_response_code(500);
+    die('Database configuration is incomplete. Set DB_HOST, DB_USER, DB_PASSWORD, and DB_NAME.');
+}
+
+function database_setting_from_environment(string $name): ?string
+{
+    $candidates = [];
+    $fromGetenv = getenv($name);
+    if (is_string($fromGetenv)) {
+        $candidates[] = $fromGetenv;
+    }
+    if (isset($_SERVER[$name]) && is_string($_SERVER[$name])) {
+        $candidates[] = $_SERVER[$name];
+    }
+    if (isset($_ENV[$name]) && is_string($_ENV[$name])) {
+        $candidates[] = $_ENV[$name];
+    }
+
+    foreach ($candidates as $candidate) {
+        if ($candidate !== '') {
+            return $candidate;
+        }
+    }
+
+    return null;
+}
+
+/**
+ * @return array<string, string>
+ */
+function database_settings_from_local_file(): array
+{
+    static $settings = null;
+    if (is_array($settings)) {
+        return $settings;
+    }
+
+    $settings = [];
+    $path = __DIR__ . '/.env';
+    if (!is_readable($path)) {
+        return $settings;
+    }
+
+    $lines = file($path, FILE_IGNORE_NEW_LINES);
+    if ($lines === false) {
+        return $settings;
+    }
+
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if ($line === '' || strncmp($line, '#', 1) === 0) {
+            continue;
+        }
+        if (strncmp($line, 'export ', 7) === 0) {
+            $line = trim(substr($line, 7));
+        }
+
+        $separator = strpos($line, '=');
+        if ($separator === false) {
+            continue;
+        }
+
+        $key = trim(substr($line, 0, $separator));
+        $rawValue = trim(substr($line, $separator + 1));
+        if ($key === '' || preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $key) !== 1) {
+            continue;
+        }
+
+        $length = strlen($rawValue);
+        if ($length >= 2) {
+            $quote = $rawValue[0];
+            if (($quote === '"' || $quote === "'") && $rawValue[$length - 1] === $quote) {
+                $rawValue = substr($rawValue, 1, -1);
+            }
+        }
+
+        $settings[$key] = $rawValue;
+    }
+
+    return $settings;
+}
 
 //banco de dados
-$server = 'localhost';
-$user = 'gerente';
-$password = '123456789';
-$base = 'alunos';
-$connection = new mysqli($server, $user, $password, $base) or die("Falha na conexão");
+$server = read_database_setting('DB_HOST');
+$user = read_database_setting('DB_USER');
+$password = read_database_setting('DB_PASSWORD');
+$base = read_database_setting('DB_NAME');
+try {
+    $connection = new mysqli($server, $user, $password, $base);
+} catch (mysqli_sql_exception) {
+    die('Falha na conexão');
+}
+if ($connection->connect_error) {
+    die('Falha na conexão');
+}
 //busca
 //verifica se o metodo GET foi realizado
 if(isset($_GET['buscanome'])){
